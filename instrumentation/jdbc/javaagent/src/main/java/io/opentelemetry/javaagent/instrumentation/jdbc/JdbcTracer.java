@@ -18,7 +18,11 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLTransactionRollbackException;
 import java.sql.Statement;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class JdbcTracer extends DatabaseClientTracer<DbInfo, SqlStatementInfo> {
   private static final JdbcTracer TRACER = new JdbcTracer();
@@ -66,11 +70,61 @@ public class JdbcTracer extends DatabaseClientTracer<DbInfo, SqlStatementInfo> {
     return CallDepthThreadLocalMap.getCallDepth(Statement.class);
   }
 
+  private static final Logger log = LoggerFactory.getLogger(JdbcTracer.class);
+    
+  public Context txBegin(Context parentContext, DbInfo dbInfo) {
+    log.info("txBegin");
+    SqlStatementInfo queryInfo = new SqlStatementInfo("BEGIN", "BEGIN", null);
+    end(startSpan(parentContext, dbInfo, queryInfo));
+    return parentContext;
+  }
+
+  public void txCommit(Context parentContext, DbInfo dbInfo) {
+    log.info("txCommit");
+    SqlStatementInfo queryInfo = new SqlStatementInfo("COMMIT", "COMMIT", null);
+    end(startSpan(parentContext, dbInfo, queryInfo));
+  }
+
+  public void txRollback(Context parentContext, DbInfo dbInfo) {
+    log.info("txRollback");
+    SqlStatementInfo queryInfo = new SqlStatementInfo("ROLLBACK", "ROLLBACK", null);
+    end(startSpan(parentContext, dbInfo, queryInfo));
+  }
+
   public Context startSpan(Context parentContext, PreparedStatement statement) {
-    return startSpan(parentContext, statement, JdbcMaps.preparedStatements.get(statement));
+    Connection connection = connectionFromStatement(statement);
+    if (connection == null) {
+      return null;
+    }
+
+    DbInfo dbInfo = extractDbInfo(connection);
+    SqlStatementInfo queryInfo = JdbcMaps.preparedStatements.get(statement);
+
+    log.info("startSpan: dbInfo = " + dbInfo + " autoCommit=" + dbInfo.getAutoCommit() + " txStarted="
+        + dbInfo.getTxStarted() + " query=" + queryInfo.getFullStatement());
+
+    if (!dbInfo.getAutoCommit() && !dbInfo.getTxStarted()) {
+      parentContext = txBegin(parentContext, dbInfo);
+      dbInfo.setTxStarted(true);
+    }    
+    return startSpan(parentContext, statement, queryInfo);
   }
 
   public Context startSpan(Context parentContext, Statement statement, String query) {
+    Connection connection = connectionFromStatement(statement);
+    if (connection == null) {
+      return null;
+    }
+
+    DbInfo dbInfo = extractDbInfo(connection);
+
+    log.info("startSpan: dbInfo = " + dbInfo + " autoCommit=" + dbInfo.getAutoCommit() + " txStarted="
+        + dbInfo.getTxStarted() + " query=" + query);
+
+    if (!dbInfo.getAutoCommit() && !dbInfo.getTxStarted()) {
+      parentContext = txBegin(parentContext, dbInfo);
+      dbInfo.setTxStarted(true);
+    }
     return startSpan(parentContext, statement, normalizeAndExtractInfo(query));
   }
 
@@ -112,7 +166,7 @@ public class JdbcTracer extends DatabaseClientTracer<DbInfo, SqlStatementInfo> {
     return name.toString();
   }
 
-  private DbInfo extractDbInfo(Connection connection) {
+  public DbInfo extractDbInfo(Connection connection) {
     DbInfo dbInfo = JdbcMaps.connectionInfo.get(connection);
     /*
      * Logic to get the DBInfo from a JDBC Connection, if the connection was not created via

@@ -20,6 +20,9 @@ public class DbInfo {
   private final String host;
   private final Integer port;
 
+  private boolean autoCommit;
+  private boolean txStarted;
+
   public DbInfo(
       String system,
       String subtype,
@@ -37,6 +40,25 @@ public class DbInfo {
     this.db = db;
     this.host = host;
     this.port = port;
+
+    this.autoCommit = true;
+    this.txStarted = false;
+  }
+
+  public boolean getAutoCommit() {
+    return autoCommit;
+  }
+
+  public void setAutoCommit(boolean autoCommit) {
+    this.autoCommit = autoCommit;
+  }
+
+  public boolean getTxStarted() {
+    return txStarted;
+  }
+
+  public void setTxStarted(boolean txStarted) {
+    this.txStarted = txStarted;
   }
 
   public String getSystem() {
